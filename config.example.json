@@ -1,0 +1,8 @@
+{
+  "accounts": {
+    "main": "~/.claude",
+    "account2": "~/.claude2"
+  },
+  "masterFolder": "~/.claude-hub-master",
+  "syncOnStart": true
+}
