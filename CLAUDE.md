@@ -62,13 +62,13 @@ Accounts can be named anything and you can have as many as needed.
 
 - `plans/1_claude-hub-implementation.md` - Core functionality (Completed)
 - `plans/2_ux-improvements.md` - UX improvements & keyboard shortcuts (Completed)
+- `plans/4_mcp-sync.md` - MCP server sync across accounts (Active)
 
-## Phase Status (Plan 2: UX Improvements)
+## Phase Status (Plan 4: MCP Server Sync)
 
-- [x] Phase 1: Compact startup output
-- [x] Phase 2: F9 usage overlay (function keys, alternate screen buffer)
-- [x] Phase 3: F10 switch account overlay
-- [x] Phase 4: Polish & documentation
+- [ ] Phase 1: MCP sync engine
+- [ ] Phase 2: `hub mcp` subcommands
+- [ ] Phase 3: Polish & edge cases
 
 ## Keyboard Shortcuts (while Claude is running)
 
