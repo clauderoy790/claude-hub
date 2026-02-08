@@ -14,6 +14,7 @@ export interface SyncSummary {
   conversations: { copied: number; updated: number; skipped: number };
   history: { entriesMerged: number };
   extensions: { copied: number; updated: number; deleted: number };
+  mcp: { serversSynced: number; accountsUpdated: number };
 }
 
 // Box dimensions - using STRING length (not visual width)
@@ -88,10 +89,11 @@ function buildSyncLine(syncSummary: SyncSummary | null, autoSwitch: boolean): st
   const parts: string[] = [];
 
   if (syncSummary) {
-    const { conversations, extensions } = syncSummary;
+    const { conversations, extensions, mcp } = syncSummary;
     const totalChanges =
       conversations.copied + conversations.updated +
-      extensions.copied + extensions.updated + extensions.deleted;
+      extensions.copied + extensions.updated + extensions.deleted +
+      mcp.accountsUpdated;
 
     if (totalChanges === 0) {
       parts.push('synced');
@@ -162,10 +164,11 @@ export function renderStartupBox(
  * Display verbose sync details (for -v flag)
  */
 export function displayVerboseSyncDetails(syncSummary: SyncSummary): void {
-  const { conversations, history, extensions } = syncSummary;
+  const { conversations, history, extensions, mcp } = syncSummary;
 
   console.log('Sync details:');
   console.log(`  Conversations: ${conversations.copied} copied, ${conversations.updated} updated, ${conversations.skipped} skipped`);
   console.log(`  History: ${history.entriesMerged} unique entries`);
   console.log(`  Extensions: ${extensions.copied} copied, ${extensions.updated} updated, ${extensions.deleted} removed`);
+  console.log(`  MCP: ${mcp.serversSynced} server(s), ${mcp.accountsUpdated} account(s) updated`);
 }

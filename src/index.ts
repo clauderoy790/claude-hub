@@ -11,7 +11,7 @@
  */
 
 import { loadConfig, validateConfig, configExists, getConfigPath } from './config';
-import { syncConversations, listConversations, syncHistory, syncExtensions } from './sync';
+import { syncConversations, listConversations, syncHistory, syncExtensions, syncMcp } from './sync';
 import { runSetupWizard, saveSetupConfig, addAccount } from './setup';
 import {
   getAllAPIUsage,
@@ -42,11 +42,18 @@ interface CliArgs {
   noAutoSwitch: boolean;
   account: string | null;
   addAccount: string | null;
+  mcpArgs: string[] | null;
   claudeArgs: string[];
 }
 
 function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
+
+  // Detect `hub mcp <subcommand> [args...]` — everything after 'mcp' is MCP args
+  let mcpArgs: string[] | null = null;
+  if (args[0] === 'mcp') {
+    mcpArgs = args.slice(1);
+  }
 
   // Find --account flag
   let account: string | null = null;
@@ -91,6 +98,7 @@ function parseArgs(): CliArgs {
     noAutoSwitch: args.includes('--no-auto-switch'),
     account,
     addAccount,
+    mcpArgs,
     claudeArgs,
   };
 }
@@ -105,6 +113,9 @@ Usage:
   hub --add-account <name>   Add a new Claude account
   hub --sync                 Sync only, don't run claude
   hub --usage                Show combined usage across all accounts
+  hub mcp add <name> [args]  Add MCP server (synced to all accounts)
+  hub mcp remove <name>      Remove MCP server from all accounts
+  hub mcp list               List MCP servers
   hub --help                 Show this help message
   hub [claude args]          Pass remaining args to claude
 
@@ -127,6 +138,7 @@ Smart Features:
   - Auto-selects account with most remaining quota
   - Detects rate limits and switches to another account
   - Syncs conversations so you can resume on any account
+  - MCP servers synced from master folder to all accounts
 
 Examples:
   hub                           # Auto-select best account and run
@@ -134,6 +146,7 @@ Examples:
   hub --add-account personal    # Add a new account called "personal"
   hub --no-auto-switch          # Disable auto-switch on rate limit
   hub --resume abc123           # Auto-select and resume conversation
+  hub mcp add codex -- npx -y codex-mcp-server  # Add MCP server
 `);
 }
 
@@ -150,6 +163,9 @@ function runSync(config: ReturnType<typeof loadConfig>, verbose: boolean): SyncS
   const extensions = syncExtensions(config, verbose);
   if (verbose) console.log('');
 
+  const mcp = syncMcp(config, verbose);
+  if (verbose) console.log('');
+
   if (verbose) {
     console.log('✓ Sync complete');
   }
@@ -158,6 +174,7 @@ function runSync(config: ReturnType<typeof loadConfig>, verbose: boolean): SyncS
     conversations,
     history,
     extensions,
+    mcp,
   };
 }
 
@@ -498,6 +515,13 @@ async function main(): Promise<void> {
     if (!validateConfig(config)) {
       console.error('Configuration validation failed');
       process.exit(1);
+    }
+
+    // MCP subcommand
+    if (args.mcpArgs) {
+      const { handleMcpCommand } = await import('./mcp/commands');
+      handleMcpCommand(args.mcpArgs, config, args.verbose);
+      return;
     }
 
     // Debug mode: list conversations

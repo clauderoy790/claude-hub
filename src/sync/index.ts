@@ -6,3 +6,4 @@
 export { syncConversations, listConversations } from './conversations';
 export { syncHistory, listHistory, HistorySyncStats } from './history';
 export { syncExtensions, listExtensions, ExtensionsSyncStats } from './extensions';
+export { syncMcp, listMcpServers, McpSyncStats } from './mcp';
