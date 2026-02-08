@@ -4,9 +4,10 @@ Sync MCP (Model Context Protocol) servers across all Claude accounts managed by 
 
 ## Context
 
-- MCP servers are stored in `<config-dir>/.claude.json` under the top-level `mcpServers` key (when using `--scope user`)
-- Each account has its own `.claude.json` with account-specific data (`oauthAccount`, `userID`, `projects`, etc.) that must NOT be overwritten
-- The master folder (`~/Git/claude-setup/.claude`) already serves as source of truth for extensions
+- MCP servers are stored in `.claude.json` under the top-level `mcpServers` key (when using `--scope user`)
+- **Critical path quirk**: For the default `~/.claude` dir, the config file is `~/.claude.json` (at HOME level). For all other dirs (e.g., `~/.claude-cc1`), it's `<dir>/.claude.json` (inside the dir). See `src/usage/api.ts:getAccountInfo()` lines 191-198.
+- Each account's `.claude.json` has account-specific data (`oauthAccount`, `userID`, `projects`, etc.) that must NOT be overwritten
+- The master folder (from `config.masterFolder`) already serves as source of truth for extensions
 - `CLAUDE_CONFIG_DIR=<dir> claude mcp add --scope user <args>` writes MCP config into `<dir>/.claude.json`
 
 ## Tech Stack
@@ -24,16 +25,40 @@ Add a new sync module that reads `mcpServers` from the master folder's `.claude.
 - `src/sync/mcp.ts` — MCP sync logic
 
 ### Files to modify:
+- `src/utils/files.ts` — Add `getClaudeConfigPath(configDir)` helper
 - `src/sync/index.ts` — Re-export new module
 - `src/display/startup.ts` — Add `mcp` to `SyncSummary` interface
 - `src/index.ts` — Call `syncMcp()` in `runSync()`, include in `SyncSummary`
 
 ### Implementation details:
 
+**`src/utils/files.ts` — New helper:**
+
+Add a `getClaudeConfigPath(configDir: string): string` function that resolves the correct `.claude.json` path for any account directory. This handles the Claude Code quirk where:
+- Default `~/.claude` → config is at `~/.claude.json` (HOME level, outside the dir)
+- All other dirs → config is at `<dir>/.claude.json` (inside the dir)
+
+This logic already exists inline in `src/usage/api.ts:getAccountInfo()` (lines 191-198). Extract it as a reusable helper since MCP sync needs it too.
+
+```typescript
+export function getClaudeConfigPath(configDir: string): string {
+  const expandedPath = expandPath(configDir);
+  const homeDir = os.homedir();
+  const defaultDir = path.join(homeDir, '.claude');
+
+  if (expandedPath === defaultDir) {
+    return path.join(homeDir, '.claude.json');
+  }
+  return path.join(expandedPath, '.claude.json');
+}
+```
+
+Also refactor `src/usage/api.ts:getAccountInfo()` to use this new helper instead of its inline logic.
+
 **`src/sync/mcp.ts`:**
 ```typescript
 export interface McpSyncStats {
-  serverssynced: number;  // number of MCP servers written to accounts
+  serversSynced: number;   // number of MCP servers in master
   accountsUpdated: number; // number of accounts that were changed
 }
 ```
@@ -41,17 +66,19 @@ export interface McpSyncStats {
 Core function: `syncMcp(config: Config, verbose: boolean): McpSyncStats`
 
 Logic:
-1. Read `<masterFolder>/.claude.json` — if file doesn't exist or has no `mcpServers` key, return `{ serversSynced: 0, accountsUpdated: 0 }` (no-op)
+1. Resolve master config path using `getClaudeConfigPath(config.masterFolder)` — if file doesn't exist or has no `mcpServers` key, return `{ serversSynced: 0, accountsUpdated: 0 }` (no-op)
 2. Parse the `mcpServers` object from master
 3. For each account in `config.accounts`:
-   a. Read `<accountPath>/.claude.json` — if file doesn't exist, skip with warning (account likely not initialized)
-   b. Parse the JSON
-   c. Compare existing top-level `mcpServers` with master's `mcpServers` (JSON deep-equal)
-   d. If different: set `data.mcpServers = masterMcpServers`, write back the file (preserving all other keys)
-   e. Track stats
+   a. Resolve config path using `getClaudeConfigPath(accountPath)`
+   b. Read the file — if it doesn't exist, skip with warning (account likely not initialized)
+   c. Parse the JSON
+   d. Compare existing top-level `mcpServers` with master's `mcpServers` (JSON.stringify deep-equal)
+   e. If different: set `data.mcpServers = masterMcpServers`, write back the file (preserving all other keys)
+   f. Track stats
 4. Return stats
 
 Important:
+- **Use `getClaudeConfigPath()` for ALL config path resolution** — never assume `<dir>/.claude.json`
 - Only touch the **top-level** `mcpServers` key — never touch `projects[*].mcpServers`
 - Read the full JSON, modify only `mcpServers`, write back — preserves all account-specific data
 - Use `JSON.stringify(data, null, 2)` to match Claude's own formatting
@@ -129,9 +156,9 @@ Add to the usage section:
 ```
 
 **Error handling:**
+- Before spawning `claude mcp add/remove`: call `ensureDir(config.masterFolder)` so the master folder exists (otherwise `claude` may fail silently)
 - If `claude` command not found: print helpful error
 - If `claude mcp add` fails: show the error, don't run sync
-- If master folder doesn't exist: print error suggesting to run `hub` first
 
 ### Testing:
 - `hub mcp list` — should show empty list (or current servers if any)
