@@ -18,7 +18,8 @@ claude-hub/
 │   ├── sync/
 │   │   ├── conversations.ts   # Conversation sync logic
 │   │   ├── extensions.ts      # Agents/commands/skills sync
-│   │   └── history.ts         # History.jsonl merge
+│   │   ├── history.ts         # History.jsonl merge
+│   │   └── mcp.ts             # MCP server sync
 │   ├── usage/
 │   │   ├── api.ts             # Anthropic API usage fetching
 │   │   ├── apiDisplay.ts      # Usage display formatting
@@ -32,6 +33,8 @@ claude-hub/
 │   │   └── switch.ts          # F10: Switch account (Phase 3)
 │   ├── display/
 │   │   └── startup.ts         # Compact startup box
+│   ├── mcp/
+│   │   └── commands.ts        # hub mcp add/remove/list subcommands
 │   └── utils/
 │       └── files.ts           # File utilities
 ├── docs/
@@ -62,13 +65,13 @@ Accounts can be named anything and you can have as many as needed.
 
 - `plans/1_claude-hub-implementation.md` - Core functionality (Completed)
 - `plans/2_ux-improvements.md` - UX improvements & keyboard shortcuts (Completed)
-- `plans/4_mcp-sync.md` - MCP server sync across accounts (Active)
+- `plans/4_mcp-sync.md` - MCP server sync across accounts (Completed)
 
 ## Phase Status (Plan 4: MCP Server Sync)
 
-- [ ] Phase 1: MCP sync engine
-- [ ] Phase 2: `hub mcp` subcommands
-- [ ] Phase 3: Polish & edge cases
+- [x] Phase 1: MCP sync engine
+- [x] Phase 2: `hub mcp` subcommands
+- [x] Phase 3: Polish & edge cases
 
 ## Keyboard Shortcuts (while Claude is running)
 
@@ -86,15 +89,19 @@ hub                    # Auto-selects best account, syncs, runs claude
 hub --account account2 # Force specific account
 hub --sync             # Manual sync only
 hub --usage            # Show combined usage across all accounts
+hub mcp add <name> -- <cmd>  # Add MCP server to all accounts
+hub mcp remove <name>        # Remove MCP server from all accounts
+hub mcp list                 # List MCP servers
 ```
 
 ## Key Features
 
 1. **Auto-sync**: Syncs all accounts before each session
-2. **Master folder**: Single source of truth for agents/commands/skills
+2. **Master folder**: Single source of truth for agents/commands/skills/MCP servers
 3. **Smart selection**: Picks account with most remaining quota
 4. **Load balancing**: Spreads usage evenly to avoid maxing one account
 5. **Combined usage**: See total remaining across all accounts
+6. **MCP sync**: `hub mcp add` installs MCP servers to all accounts at once
 
 ## Development
 
@@ -108,5 +115,6 @@ npm link  # Makes 'hub' command available globally
 
 - Conversations are synced by copying .jsonl files (includes renames)
 - Extensions sync from master → all accounts
+- MCP servers sync from master's `.claude.json` → all accounts' `.claude.json` (only the `mcpServers` key; account-specific data is preserved)
 - Local extension additions are detected and copied to master
-- Usage data parsed from `claude /usage` output
+- Config path quirk: `~/.claude` stores config at `~/.claude.json`, other dirs at `<dir>/.claude.json` — use `getClaudeConfigPath()` from `utils/files.ts`

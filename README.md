@@ -235,19 +235,25 @@ hub -c
 ## CLI Reference
 
 ```
-hub                     Auto-select best account, sync, and run claude
-hub --account <name>    Use specific account (skip auto-selection)
-hub --sync              Sync only, don't run claude
-hub --usage             Show combined usage across all accounts
-hub --help              Show help message
+hub                          Auto-select best account, sync, and run claude
+hub --account <name>         Use specific account (skip auto-selection)
+hub --add-account <name>     Add a new Claude account
+hub --sync                   Sync only, don't run claude
+hub --usage                  Show combined usage across all accounts
+hub mcp add <name> [args]    Add MCP server (synced to all accounts)
+hub mcp remove <name>        Remove MCP server from all accounts
+hub mcp list                 List MCP servers
+hub --help                   Show help message
 
 Options:
-  --account <name>    Use specific account (main, account2, etc.)
-  --sync              Sync only, don't run claude
-  --usage             Show combined usage across all accounts
-  -v, --verbose       Show detailed sync output
-  --list              List conversations per account (debug)
-  -h, --help          Show help
+  --account <name>       Use specific account (main, account2, etc.)
+  --add-account <name>   Add a new account (launches Claude to authenticate)
+  --no-auto-switch       Disable automatic account switching on rate limit
+  --sync                 Sync only, don't run claude
+  --usage                Show combined usage across all accounts
+  -v, --verbose          Show detailed sync output
+  --list                 List conversations per account (debug)
+  -h, --help             Show help
 ```
 
 ## How It Works
@@ -287,6 +293,39 @@ masterFolder/
 - Deletions from master are propagated to all accounts
 - Master folder is the source of truth
 
+### MCP Server Sync
+
+MCP (Model Context Protocol) servers are synced across all accounts. Instead of running `claude mcp add` for each account, use `hub mcp add` once and it syncs everywhere.
+
+**Add an MCP server to all accounts:**
+```bash
+hub mcp add codex-cli -- npx -y codex-mcp-server
+```
+
+**List configured MCP servers:**
+```bash
+hub mcp list
+```
+
+**Remove an MCP server from all accounts:**
+```bash
+hub mcp remove codex-cli
+```
+
+**All `claude mcp add` flags are supported:**
+```bash
+# With environment variables
+hub mcp add -e API_KEY=xxx my-server -- npx my-mcp-server
+
+# HTTP transport
+hub mcp add --transport http sentry https://mcp.sentry.dev/mcp
+
+# With headers
+hub mcp add --transport http -H "Authorization: Bearer xxx" my-api https://api.example.com/mcp
+```
+
+MCP servers are stored in the master folder's `.claude.json` and synced to all accounts on every `hub` run or `hub mcp add/remove`. Only the `mcpServers` key is synced — all account-specific data (credentials, usage stats, etc.) is preserved.
+
 ### History Sync
 
 The `history.jsonl` file (conversation index) is merged across accounts, deduplicated by `sessionId + timestamp`.
@@ -301,12 +340,15 @@ claude-hub/
 │   ├── sync/
 │   │   ├── conversations.ts   # Conversation sync
 │   │   ├── extensions.ts      # Agents/commands/skills sync
-│   │   └── history.ts         # History merge
+│   │   ├── history.ts         # History merge
+│   │   └── mcp.ts             # MCP server sync
 │   ├── usage/
 │   │   ├── api.ts             # Anthropic API usage fetching
 │   │   ├── apiDisplay.ts      # Progress bar display with reset timers
 │   │   ├── selector.ts        # Smart account selection logic
 │   │   └── parser.ts          # Legacy ccusage parser (estimates)
+│   ├── mcp/
+│   │   └── commands.ts        # hub mcp add/remove/list subcommands
 │   ├── pty/
 │   │   └── wrapper.ts         # PTY wrapper with F9/F10 key detection
 │   └── utils/
@@ -431,6 +473,7 @@ Press 1 to switch, Esc to cancel
 |------|-------------|---------|--------|
 | [Plan 1](plans/1_claude-hub-implementation.md) | Core functionality | 2026-01-18 | Completed |
 | [Plan 2](plans/2_ux-improvements.md) | UX improvements & in-session commands | 2026-01-30 | Completed |
+| [Plan 4](plans/4_mcp-sync.md) | MCP server sync across accounts | 2026-02-08 | Completed |
 
 ## License
 

@@ -108,6 +108,24 @@ export function ensureDir(dirPath: string): void {
 }
 
 /**
+ * Resolve the correct .claude.json path for a Claude config directory.
+ *
+ * Claude Code quirk: the default ~/.claude dir stores its config at ~/.claude.json
+ * (at HOME level), while all other dirs store it at <dir>/.claude.json (inside the dir).
+ * See src/usage/api.ts:getAccountInfo() for the original inline version of this logic.
+ */
+export function getClaudeConfigPath(configDir: string): string {
+  const expandedPath = expandPath(configDir);
+  const homeDir = os.homedir();
+  const defaultDir = path.join(homeDir, '.claude');
+
+  if (expandedPath === defaultDir) {
+    return path.join(homeDir, '.claude.json');
+  }
+  return path.join(expandedPath, '.claude.json');
+}
+
+/**
  * Delete a file or directory recursively
  */
 export function deleteRecursive(targetPath: string): void {

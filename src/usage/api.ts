@@ -15,7 +15,7 @@ import { createHash } from 'crypto';
 import https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
-import { expandPath } from '../utils/files';
+import { expandPath, getClaudeConfigPath } from '../utils/files';
 
 // ============================================================================
 // Interfaces
@@ -184,19 +184,7 @@ export function getOAuthTokenFromKeychain(configDir: string): KeychainData {
  */
 export function getAccountInfo(configDir: string): OAuthAccountInfo | null {
   try {
-    const expandedPath = expandPath(configDir);
-    const homeDir = process.env.HOME || '';
-    const defaultDir = path.join(homeDir, DEFAULT_CLAUDE_DIR);
-
-    // For default ~/.claude, config is at ~/.claude.json
-    // For other dirs, config is at <dir>/.claude.json
-    let configFile: string;
-    if (expandedPath === defaultDir) {
-      configFile = path.join(homeDir, '.claude.json');
-    } else {
-      configFile = path.join(expandedPath, '.claude.json');
-    }
-
+    const configFile = getClaudeConfigPath(configDir);
     const content = fs.readFileSync(configFile, 'utf-8');
     const config = JSON.parse(content);
 
