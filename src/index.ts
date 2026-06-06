@@ -12,7 +12,7 @@
 
 import { loadConfig, validateConfig, configExists, getConfigPath } from './config';
 import { syncConversations, listConversations, syncHistory, syncExtensions, syncMcp } from './sync';
-import { runSetupWizard, saveSetupConfig, addAccount } from './setup';
+import { runSetupWizard, saveSetupConfig, addAccount, handleRenameAccount } from './setup';
 import {
   getAllAPIUsage,
   displayAPIUsage,
@@ -31,6 +31,7 @@ import { executeCommand, CommandContext } from './commands';
 import { spawn } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 interface CliArgs {
   sync: boolean;
@@ -42,6 +43,7 @@ interface CliArgs {
   noAutoSwitch: boolean;
   account: string | null;
   addAccount: string | null;
+  renameAccount: { oldName: string; newName: string } | null;
   mcpArgs: string[] | null;
   claudeArgs: string[];
 }
@@ -69,8 +71,18 @@ function parseArgs(): CliArgs {
     addAccount = args[addAccountIndex + 1];
   }
 
+  // Find --rename-account flag (expects two arguments: old name, new name)
+  let renameAccount: { oldName: string; newName: string } | null = null;
+  const renameAccountIndex = args.indexOf('--rename-account');
+  if (renameAccountIndex !== -1 && renameAccountIndex + 2 < args.length) {
+    renameAccount = {
+      oldName: args[renameAccountIndex + 1],
+      newName: args[renameAccountIndex + 2],
+    };
+  }
+
   // Separate hub flags from claude args
-  const hubFlags = ['--sync', '--help', '-h', '--list', '-v', '--verbose', '--account', '--usage', '--score', '--no-auto-switch', '--add-account'];
+  const hubFlags = ['--sync', '--help', '-h', '--list', '-v', '--verbose', '--account', '--usage', '--score', '--no-auto-switch', '--add-account', '--rename-account'];
   const claudeArgs: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -80,6 +92,9 @@ function parseArgs(): CliArgs {
     if (hubFlags.includes(arg)) {
       if (arg === '--account' || arg === '--add-account') {
         i++; // Skip the value too
+      }
+      if (arg === '--rename-account') {
+        i += 2; // Skip both old and new name values
       }
       continue;
     }
@@ -98,6 +113,7 @@ function parseArgs(): CliArgs {
     noAutoSwitch: args.includes('--no-auto-switch'),
     account,
     addAccount,
+    renameAccount,
     mcpArgs,
     claudeArgs,
   };
@@ -108,31 +124,33 @@ function showHelp(): void {
 Claude Hub - Sync and manage multiple Claude Code accounts
 
 Usage:
-  hub                        Auto-select best account, sync, and run claude
-  hub --account <name>       Use specific account (skip auto-selection)
-  hub --add-account <name>   Add a new Claude account
-  hub --sync                 Sync only, don't run claude
-  hub --usage                Show combined usage across all accounts
-  hub mcp add <name> [args]  Add MCP server (synced to all accounts)
-  hub mcp remove <name>      Remove MCP server from all accounts
-  hub mcp list               List MCP servers
-  hub --help                 Show this help message
-  hub [claude args]          Pass remaining args to claude
+  hub                              Auto-select best account, sync, and run claude
+  hub --account <name>             Use specific account (skip auto-selection)
+  hub --add-account <name>         Add a new Claude account
+  hub --rename-account <old> <new> Rename an account
+  hub --sync                       Sync only, don't run claude
+  hub --usage                      Show combined usage across all accounts
+  hub mcp add <name> [args]        Add MCP server (synced to all accounts)
+  hub mcp remove <name>            Remove MCP server from all accounts
+  hub mcp list                     List MCP servers
+  hub --help                       Show this help message
+  hub [claude args]                Pass remaining args to claude
 
 Options:
-  --account <name>       Use specific account (as named in config.json)
-  --add-account <name>   Add a new account (launches Claude to authenticate)
-  --no-auto-switch       Disable automatic account switching on rate limit
-  --sync                 Sync only, don't run claude
-  --usage                Show combined usage across all accounts
-  --score                Show usage scoring breakdown (for tuning algorithm)
-  -v, --verbose          Show detailed sync output
-  --list                 List conversations per account (debug)
-  -h, --help             Show help
+  --account <name>              Use specific account (as named in config.json)
+  --add-account <name>          Add a new account (launches Claude to authenticate)
+  --rename-account <old> <new>  Rename an existing account
+  --no-auto-switch              Disable automatic account switching on rate limit
+  --sync                        Sync only, don't run claude
+  --usage                       Show combined usage across all accounts
+  --score                       Show usage scoring breakdown (for tuning algorithm)
+  -v, --verbose                 Show detailed sync output
+  --list                        List conversations per account (debug)
+  -h, --help                    Show help
 
 Keyboard Shortcuts (while Claude is running):
-  F9                     Show usage for all accounts
-  F10                    Switch to another account
+  F9                            Show usage for all accounts
+  F10                           Switch to another account
 
 Smart Features:
   - Auto-selects account with most remaining quota
@@ -141,11 +159,12 @@ Smart Features:
   - MCP servers synced from master folder to all accounts
 
 Examples:
-  hub                           # Auto-select best account and run
-  hub --account work            # Force specific account
-  hub --add-account personal    # Add a new account called "personal"
-  hub --no-auto-switch          # Disable auto-switch on rate limit
-  hub --resume abc123           # Auto-select and resume conversation
+  hub                                  # Auto-select best account and run
+  hub --account work                   # Force specific account
+  hub --add-account personal           # Add a new account called "personal"
+  hub --rename-account main cc1        # Rename "main" to "cc1"
+  hub --no-auto-switch                 # Disable auto-switch on rate limit
+  hub --resume abc123                  # Auto-select and resume conversation
   hub mcp add codex -- npx -y codex-mcp-server  # Add MCP server
 `);
 }
@@ -190,7 +209,17 @@ function runSync(config: ReturnType<typeof loadConfig>, verbose: boolean): SyncS
 function findActiveSessionId(configDir: string): string | null {
   try {
     const cwd = process.cwd();
-    const projectDirName = '-' + cwd.replace(/\//g, '-').slice(1);
+    // Convert path to project dir name format used by Claude Code
+    // macOS: /Users/me/code -> -Users-me-code
+    // Windows: C:\Git\code -> C--Git-code
+    let projectDirName: string;
+    if (process.platform === 'win32') {
+      // Windows: replace colon and backslashes with dashes (C:\Git\x → C--Git-x)
+      projectDirName = cwd.replace(/:/g, '-').replace(/\\/g, '-');
+    } else {
+      // macOS/Linux: replace leading / with -, then replace remaining / with -
+      projectDirName = '-' + cwd.slice(1).replace(/\//g, '-');
+    }
     const projectPath = path.join(configDir, 'projects', projectDirName);
 
     if (!fs.existsSync(projectPath)) {
@@ -265,7 +294,7 @@ function launchClaudeWithPty(
   }
 
   // Build environment
-  const homeDir = process.env.HOME || '';
+  const homeDir = os.homedir();
   const defaultClaudeDir = `${homeDir}/.claude`;
   const needsConfigDir = accountPath !== defaultClaudeDir;
 
@@ -404,9 +433,15 @@ function launchClaudeWithPty(
 
       // Find session ID to resume
       const sessionId = findActiveSessionId(accountPath);
-      const resumeArgs = sessionId
-        ? ['--resume', sessionId, ...claudeArgs.filter(a => a !== '--resume' && !claudeArgs[claudeArgs.indexOf('--resume') + 1]?.includes(a))]
-        : claudeArgs;
+      let resumeArgs = claudeArgs;
+      if (sessionId) {
+        const filteredArgs = claudeArgs.filter((a, i) => {
+          if (a === '--resume') return false;
+          if (i > 0 && claudeArgs[i - 1] === '--resume') return false;
+          return true;
+        });
+        resumeArgs = ['--resume', sessionId, ...filteredArgs];
+      }
 
       if (sessionId) {
         console.log(`   Resuming session: ${sessionId.slice(0, 8)}...`);
@@ -456,7 +491,7 @@ function launchClaudeFallback(
 ): void {
   const accountPath = config.accounts[accountName];
 
-  const homeDir = process.env.HOME || '';
+  const homeDir = os.homedir();
   const defaultClaudeDir = `${homeDir}/.claude`;
   const needsConfigDir = accountPath !== defaultClaudeDir;
 
@@ -509,6 +544,12 @@ async function main(): Promise<void> {
     // Handle --add-account first (before validation, since we might have no accounts yet)
     if (args.addAccount) {
       const success = await addAccount(args.addAccount, config);
+      process.exit(success ? 0 : 1);
+    }
+
+    // Handle --rename-account
+    if (args.renameAccount) {
+      const success = handleRenameAccount(args.renameAccount.oldName, args.renameAccount.newName, config);
       process.exit(success ? 0 : 1);
     }
 

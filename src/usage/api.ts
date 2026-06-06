@@ -1,21 +1,21 @@
 /**
  * Usage API - Fetches real usage data directly from Anthropic's API
  *
- * Uses OAuth token from macOS Keychain to call the usage endpoint.
- * This gives actual usage percentages (vs ccusage which estimates from local files).
+ * Uses OAuth tokens to call the usage endpoint.
+ * Token storage is platform-specific:
+ * - macOS: Keychain
+ * - Windows: .credentials.json file
  *
- * Key discovery: Claude Code stores OAuth tokens with config-dir-specific keychain entries:
- * - Default (~/.claude): "Claude Code-credentials"
- * - Other dirs: "Claude Code-credentials-{sha256prefix}"
- *   where sha256prefix = first 8 chars of SHA256(expanded_config_path)
+ * This gives actual usage percentages (vs ccusage which estimates from local files).
  */
 
-import { execSync, spawnSync } from 'child_process';
-import { createHash } from 'crypto';
+import { spawnSync } from 'child_process';
 import https from 'https';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { expandPath, getClaudeConfigPath } from '../utils/files';
+import { platform, CredentialData } from '../platform';
 
 // ============================================================================
 // Interfaces
@@ -78,18 +78,6 @@ export interface ExtraUsageData {
   isEnabled: boolean;
 }
 
-/** Keychain token data structure */
-interface KeychainData {
-  claudeAiOauth: {
-    accessToken: string;
-    refreshToken: string;
-    expiresAt: number;
-    scopes: string[];
-    subscriptionType: string;
-    rateLimitTier: string;
-  };
-}
-
 /** Account info from .claude.json */
 interface OAuthAccountInfo {
   accountUuid: string;
@@ -104,73 +92,7 @@ interface OAuthAccountInfo {
 
 const USAGE_API_URL = 'https://api.anthropic.com/api/oauth/usage';
 const API_BETA_HEADER = 'oauth-2025-04-20';
-const KEYCHAIN_SERVICE_BASE = 'Claude Code-credentials';
 const DEFAULT_CLAUDE_DIR = '.claude';
-
-// ============================================================================
-// Keychain Functions
-// ============================================================================
-
-/**
- * Compute the keychain service name for a config directory
- *
- * Claude Code stores OAuth tokens in keychain with directory-specific names:
- * - Default (~/.claude): "Claude Code-credentials"
- * - Other dirs: "Claude Code-credentials-{sha256prefix}"
- *
- * The sha256prefix is the first 8 characters of SHA256(expanded_config_path)
- *
- * @param configDir - Path to config directory (e.g., "~/.claude2")
- * @returns Keychain service name
- */
-export function getKeychainServiceName(configDir: string): string {
-  const expandedPath = expandPath(configDir);
-  const homeDir = process.env.HOME || '';
-  const defaultDir = path.join(homeDir, DEFAULT_CLAUDE_DIR);
-
-  // Default ~/.claude uses the base service name
-  if (expandedPath === defaultDir) {
-    return KEYCHAIN_SERVICE_BASE;
-  }
-
-  // Other directories use a SHA256-based suffix
-  const hash = createHash('sha256').update(expandedPath).digest('hex');
-  const suffix = hash.substring(0, 8);
-
-  return `${KEYCHAIN_SERVICE_BASE}-${suffix}`;
-}
-
-/**
- * Read OAuth token from macOS Keychain for a specific config directory
- */
-export function getOAuthTokenFromKeychain(configDir: string): KeychainData {
-  const serviceName = getKeychainServiceName(configDir);
-
-  try {
-    const result = execSync(
-      `security find-generic-password -s "${serviceName}" -w`,
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe'] }
-    );
-
-    const data = JSON.parse(result.trim()) as KeychainData;
-
-    if (!data.claudeAiOauth?.accessToken) {
-      throw new Error('OAuth token not found in keychain data');
-    }
-
-    return data;
-  } catch (err) {
-    if (err instanceof Error) {
-      if (err.message.includes('could not be found')) {
-        throw new Error(`Not logged in for ${configDir}. Run \`claude\` with that config to authenticate.`);
-      }
-      if (err.message.includes('OAuth token not found')) {
-        throw err;
-      }
-    }
-    throw new Error(`Failed to read keychain for ${configDir}: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
 
 // ============================================================================
 // Account Info Functions
@@ -202,8 +124,8 @@ export function getAccountInfo(configDir: string): OAuthAccountInfo | null {
  * Refresh OAuth token by launching Claude CLI
  *
  * Claude refreshes expired tokens on startup, before processing any input.
- * We launch with stdin closed (/dev/null) which triggers the refresh but
- * exits immediately. This is fast and doesn't consume any API usage.
+ * We launch with stdin closed which triggers the refresh but exits immediately.
+ * This is fast and doesn't consume any API usage.
  *
  * NOTE: `claude --version` does NOT refresh tokens - it doesn't check auth.
  * NOTE: The command will "fail" with an error about needing input, but
@@ -214,7 +136,7 @@ export function getAccountInfo(configDir: string): OAuthAccountInfo | null {
  */
 export function refreshToken(configDir: string): boolean {
   const expandedPath = expandPath(configDir);
-  const homeDir = process.env.HOME || '';
+  const homeDir = os.homedir();
   const defaultDir = path.join(homeDir, DEFAULT_CLAUDE_DIR);
 
   // Build environment - only set CLAUDE_CONFIG_DIR for non-default dirs
@@ -224,14 +146,14 @@ export function refreshToken(configDir: string): boolean {
   }
 
   try {
-    // Launch claude with stdin from /dev/null
+    // Launch claude with stdin ignored
     // This triggers token refresh on startup, then exits immediately
     // The command will exit with error (no input) but token is refreshed
     spawnSync('claude', [], {
       env,
       encoding: 'utf-8',
       timeout: 30000, // 30 second timeout
-      stdio: ['ignore', 'pipe', 'pipe'], // stdin ignored = /dev/null
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     // We don't check exit status because the command "fails" due to no input,
@@ -368,11 +290,11 @@ function parseAPIResponse(accountName: string, response: UsageAPIResponse, email
 /**
  * Get usage for a single account
  *
- * This function reads the OAuth token from the correct keychain entry
- * for the given config directory and makes the API call.
+ * This function reads the OAuth token using the platform-specific method
+ * (Keychain on macOS, .credentials.json on Windows) and makes the API call.
  *
  * If the token is expired (401), it automatically refreshes by running
- * `claude --version` and retries the API call.
+ * `claude` and retries the API call.
  *
  * @param accountName - Display name for the account (e.g., "main", "work")
  * @param configDir - Path to the config directory (e.g., "~/.claude2")
@@ -397,9 +319,9 @@ export async function getAPIUsage(accountName: string, configDir: string): Promi
   });
 
   try {
-    // Read token from the config-dir-specific keychain entry
-    let keychainData = getOAuthTokenFromKeychain(configDir);
-    let token = keychainData.claudeAiOauth.accessToken;
+    // Read token using platform-specific method
+    let credentials = platform.getCredentials(configDir);
+    let token = credentials.claudeAiOauth.accessToken;
 
     // Fetch usage from API
     try {
@@ -415,9 +337,9 @@ export async function getAPIUsage(accountName: string, configDir: string): Promi
           return makeErrorResult('Token expired. Refresh failed.');
         }
 
-        // Re-read the token from keychain (should be updated now)
-        keychainData = getOAuthTokenFromKeychain(configDir);
-        token = keychainData.claudeAiOauth.accessToken;
+        // Re-read the token (should be updated now)
+        credentials = platform.getCredentials(configDir);
+        token = credentials.claudeAiOauth.accessToken;
 
         // Retry the API call
         const response = await fetchUsageFromAPI(token);
@@ -435,7 +357,7 @@ export async function getAPIUsage(accountName: string, configDir: string): Promi
 /**
  * Get usage for all configured accounts
  *
- * Each account has its own keychain entry, so we can fetch in parallel!
+ * Each account has its own credentials, so we can fetch in parallel!
  * Results are cached for USAGE_CACHE_SECONDS to avoid excessive API calls.
  */
 
@@ -498,34 +420,6 @@ export function hasValidUsageCache(): boolean {
 // ============================================================================
 
 /**
- * Test function - show keychain service names for configured accounts
- *
- * Run with: npm run build && node dist/usage/api.js keys
- *
- * Note: This uses example account names. In real usage, accounts come from config.json.
- */
-export function testKeychainServiceNames(): void {
-  console.log('=== Keychain Service Names ===\n');
-  console.log('This test shows how keychain service names are computed.\n');
-
-  // Example accounts for demonstration
-  const exampleAccounts: Record<string, string> = {
-    'main': '~/.claude',
-    'account2': '~/.claude2',
-  };
-
-  for (const [name, configDir] of Object.entries(exampleAccounts)) {
-    const expandedPath = expandPath(configDir);
-    const serviceName = getKeychainServiceName(configDir);
-    console.log(`${name} (${expandedPath})`);
-    console.log(`  Service: ${serviceName}`);
-    console.log('');
-  }
-
-  console.log('To test with your actual accounts, use: hub --usage');
-}
-
-/**
  * Test function - fetch usage for default account only
  *
  * Run with: npm run build && node dist/usage/api.js
@@ -533,7 +427,7 @@ export function testKeychainServiceNames(): void {
  * For testing all configured accounts, use: hub --usage
  */
 export async function testCurrentUsage(): Promise<void> {
-  console.log('=== Claude Usage API Test (Default Account) ===\n');
+  console.log(`=== Claude Usage API Test (${platform.name}) ===\n`);
 
   const usage = await getAPIUsage('main', '~/.claude');
 
@@ -552,11 +446,5 @@ export async function testCurrentUsage(): Promise<void> {
 
 // Run test if this file is executed directly
 if (require.main === module) {
-  const args = process.argv.slice(2);
-
-  if (args.includes('keys')) {
-    testKeychainServiceNames();
-  } else {
-    testCurrentUsage();
-  }
+  testCurrentUsage();
 }

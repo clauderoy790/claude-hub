@@ -2,7 +2,7 @@
 
 A CLI tool for managing multiple Claude Code accounts. Keeps conversations, agents, commands, and skills in sync across accounts, with real-time usage tracking to help you spread usage evenly by always starting sessions on the account with the most remaining quota. No need to logout/login to work with multiple accounts. Syncs your conversations across your accounts and sync your skills, commands, and agents through a "master" folder so you simply add a new skill/command/agent in your master folder and they will be synced to all accounts.
 
-> **Note: macOS only** - This tool currently only works on macOS because it uses the macOS Keychain to fetch OAuth tokens for usage tracking.
+> **Supported platforms:** MacOS and Windows
 
 ### Launch Claude (Auto-Select Best Account)
 
@@ -72,16 +72,27 @@ cd claude-hub
 # Install dependencies
 npm install
 
-# Build and link globally (makes 'hub' command available)
-npm run build && sudo npm link
-or
-npm run build:and:link
+# Build and make 'hub' command available globally
+npm run install-cli
 
-# If you want to remove the link to remove the hub command
-sudo npm unlink -g claude-hub
-or
-npm run unlink
+# To uninstall
+npm run uninstall-cli
 ```
+
+> **Note:** On macOS, you may need `sudo npm run install-cli`. On Windows, run as Administrator if you get permission errors.
+
+### Windows Prerequisites
+
+Windows requires Visual Studio Build Tools for native module compilation:
+
+1. Install [Visual Studio Build Tools 2019](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2019) (or full Visual Studio)
+2. During installation, select **"Desktop development with C++"** workload
+3. In **Individual components**, also select:
+   - MSVC v142 - VS 2019 C++ x64/x86 Spectre-mitigated libs (Latest)
+
+> **Troubleshooting:** If `npm install` fails with node-gyp errors:
+> 1. Ensure Spectre-mitigated libraries are installed (VS Installer → Individual components → search "spectre" → install Latest)
+> 2. Update npm: `npm install -g npm@latest`
 
 ## Getting Started
 
@@ -133,6 +144,16 @@ This will:
 - Log in with your **other** Anthropic account (the one you want for "work")
 - After authenticating, exit Claude (Ctrl+C or `/exit`)
 - The account is now configured
+
+### Renaming an Account
+
+To rename an existing account (e.g., from "main" to "cc1"):
+
+```bash
+hub --rename-account main cc1
+```
+
+This updates `config.json` without modifying the underlying config directory.
 
 ### Manual Configuration
 
@@ -235,38 +256,31 @@ hub -c
 ## CLI Reference
 
 ```
-hub                          Auto-select best account, sync, and run claude
-hub --account <name>         Use specific account (skip auto-selection)
-hub --add-account <name>     Add a new Claude account
-hub --sync                   Sync only, don't run claude
-hub --usage                  Show combined usage across all accounts
-hub mcp add <name> [args]    Add MCP server (synced to all accounts)
-hub mcp remove <name>        Remove MCP server from all accounts
-hub mcp list                 List MCP servers
-hub --help                   Show help message
-
-Options:
-  --account <name>       Use specific account (main, account2, etc.)
-  --add-account <name>   Add a new account (launches Claude to authenticate)
-  --no-auto-switch       Disable automatic account switching on rate limit
-  --sync                 Sync only, don't run claude
-  --usage                Show combined usage across all accounts
-  -v, --verbose          Show detailed sync output
-  --list                 List conversations per account (debug)
-  -h, --help             Show help
+hub                              Auto-select best account, sync, and run claude
+hub --account <name>             Use specific account (skip auto-selection)
+hub --add-account <name>         Add a new Claude account
+hub --rename-account <old> <new> Rename an existing account
+hub --sync                       Sync only, don't run claude
+hub --usage                      Show combined usage across all accounts
+hub --no-auto-switch             Disable automatic account switching on rate limit
+hub mcp add <name> [args]        Add MCP server (synced to all accounts)
+hub mcp remove <name>            Remove MCP server from all accounts
+hub mcp list                     List MCP servers
+hub -v, --verbose                Show detailed sync output
+hub -h, --help                   Show help
 ```
 
 ## How It Works
 
 ### Usage Tracking
 
-Claude Hub fetches **real usage data** directly from Anthropic's API using OAuth tokens stored in macOS Keychain. This gives you accurate percentages (not estimates).
+Claude Hub fetches **real usage data** directly from Anthropic's API using OAuth tokens. This gives you accurate percentages (not estimates).
 
-Each Claude config directory has its own keychain entry:
-- `~/.claude` → `"Claude Code-credentials"`
-- `~/.claude2` → `"Claude Code-credentials-{sha256prefix}"`
+**Token storage:**
+- **macOS**: Keychain entries (e.g., `"Claude Code-credentials"` for `~/.claude`)
+- **Windows**: `.credentials.json` files in each config directory
 
-See [Multi-Account Keychain Guide](docs/multi-account-keychain.md) for details.
+See [Multi-Account Keychain Guide](docs/multi-account-keychain.md) for macOS details.
 
 ### Conversation Sync
 
@@ -371,19 +385,25 @@ claude-hub/
 # Build
 npm run build
 
-# Test usage API directly
-node dist/usage/api.js all
+# Run all tests
+npm test
 
-# Test keychain service name computation
-node dist/usage/api.js keys
+# Run unit tests only (fast, mocked, runs anywhere)
+npm run test:unit
+
+# Run integration tests only (real system calls, platform-specific)
+npm run test:integration
 ```
+
+Tests use [Jest](https://jestjs.io/) with TypeScript. Unit tests are in `tests/unit/`, integration tests in `tests/integration/`. When adding new features, include unit tests to prevent regressions.
 
 ## Requirements
 
 - Node.js 18+
-- macOS (for Keychain access)
+- macOS or Windows
 - Claude Code CLI installed (`claude` command available)
 - Multiple Claude Pro accounts (optional, works with one too)
+- Windows: Visual Studio Build Tools 2019 with C++ workload (for native module compilation)
 
 ## Troubleshooting
 

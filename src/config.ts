@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { expandPath } from './utils/files';
+import * as os from 'os';
+import { expandPath, contractPath } from './utils/files';
 
 export interface Config {
   accounts: Record<string, string>;
@@ -64,11 +65,24 @@ export function loadConfig(): Config {
 
 /**
  * Save configuration to config.json
+ * Contracts absolute home-directory paths back to ~/... form for portability
  */
 export function saveConfig(config: Config): void {
   const scriptDir = getScriptDir();
   const configPath = path.join(scriptDir, CONFIG_FILE);
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+  const portableAccounts: Record<string, string> = {};
+  for (const [name, accountPath] of Object.entries(config.accounts)) {
+    portableAccounts[name] = contractPath(accountPath);
+  }
+
+  const portable = {
+    ...config,
+    accounts: portableAccounts,
+    masterFolder: contractPath(config.masterFolder),
+  };
+
+  fs.writeFileSync(configPath, JSON.stringify(portable, null, 2));
 }
 
 /**
@@ -129,7 +143,7 @@ export function validateConfig(config: Config): boolean {
   if (!fs.existsSync(config.masterFolder)) {
     console.log(`Master folder missing: ${config.masterFolder}`);
 
-    const defaultClaudeDir = path.join(process.env.HOME || '', '.claude');
+    const defaultClaudeDir = path.join(os.homedir(), '.claude');
 
     if (fs.existsSync(defaultClaudeDir)) {
       console.log('Recreating from ~/.claude...');

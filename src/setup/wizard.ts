@@ -10,10 +10,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import * as readline from 'readline';
 import { expandPath } from '../utils/files';
 
-const HOME = process.env.HOME || '';
+const HOME = os.homedir();
 const DEFAULT_MASTER_FOLDER = '~/.claude-hub-master';
 const DEFAULT_CLAUDE_DIR = path.join(HOME, '.claude');
 

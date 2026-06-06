@@ -18,14 +18,6 @@ interface SyncStats {
 }
 
 /**
- * Convert project path to directory name
- * /Users/yourname/projects/myproject -> -Users-yourname-projects-myproject
- */
-function projectPathToDirectoryName(projectPath: string): string {
-  return projectPath.replace(/\//g, '-');
-}
-
-/**
  * Get all project directories for an account
  */
 function getProjectDirectories(accountPath: string): string[] {
@@ -37,7 +29,7 @@ function getProjectDirectories(accountPath: string): string[] {
 
   const entries = fs.readdirSync(projectsDir, { withFileTypes: true });
   return entries
-    .filter(entry => entry.isDirectory() && entry.name.startsWith('-'))
+    .filter(entry => entry.isDirectory())
     .map(entry => entry.name);
 }
 

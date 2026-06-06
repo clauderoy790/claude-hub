@@ -2,8 +2,6 @@
 export {
   getAPIUsage,
   getAllAPIUsage,
-  getKeychainServiceName,
-  getOAuthTokenFromKeychain,
   getAccountInfo,
   fetchUsageFromAPI,
   clearUsageCache,

@@ -12,12 +12,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as readline from 'readline';
-import { spawnSync } from 'child_process';
 import * as pty from 'node-pty';
 import { Config, saveConfig } from '../config';
 import { expandPath } from '../utils/files';
-
-const HOME = process.env.HOME || '';
+import { platform } from '../platform';
 
 /**
  * Mark onboarding as complete in the account's .claude.json
@@ -132,15 +130,7 @@ async function waitForEnter(message: string): Promise<void> {
  * Resolve the full path to the claude command
  */
 function resolveClaudeCommand(): string {
-  try {
-    const result = spawnSync('which', ['claude'], { encoding: 'utf-8' });
-    if (result.status === 0 && result.stdout.trim()) {
-      return result.stdout.trim();
-    }
-  } catch {
-    // Fall through
-  }
-  return 'claude';
+  return platform.resolveCommand('claude');
 }
 
 /**

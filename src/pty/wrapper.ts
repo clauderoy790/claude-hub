@@ -11,26 +11,13 @@
 
 import * as pty from 'node-pty';
 import { EventEmitter } from 'events';
-import { execSync } from 'child_process';
+import { platform } from '../platform';
 
 const RATE_LIMIT_TRIGGER = "You've hit your limit";
 
 // Function key escape sequences (xterm style)
 const F9_SEQ = '\x1b[20~';
 const F10_SEQ = '\x1b[21~';
-
-/**
- * Resolve the full path to a command using 'which'
- * node-pty doesn't do PATH resolution like a shell does
- */
-function resolveCommand(command: string): string {
-  try {
-    const fullPath = execSync(`which ${command}`, { encoding: 'utf-8' }).trim();
-    return fullPath || command;
-  } catch {
-    return command;
-  }
-}
 
 export interface PtyWrapperOptions {
   /** Command to run (default: 'claude') */
@@ -110,7 +97,7 @@ export function createPtyWrapper(options: PtyWrapperOptions = {}): PtyWrapper {
   }
 
   // Resolve full path to command (node-pty doesn't do PATH resolution)
-  const resolvedCommand = resolveCommand(command);
+  const resolvedCommand = platform.resolveCommand(command);
 
   // Get terminal size
   const cols = process.stdout.columns || 80;
@@ -190,8 +177,16 @@ export function createPtyWrapper(options: PtyWrapperOptions = {}): PtyWrapper {
   }
   process.stdin.resume();
 
+  const isWindows = process.platform === 'win32';
+
   const stdinHandler = async (data: Buffer) => {
-    const str = data.toString();
+    let str = data.toString();
+
+    // Windows terminals send \x08 (BS) for Backspace and \x7f (DEL) for Ctrl+Backspace,
+    // but xterm-256color expects \x7f for Backspace. Remap so backspace works correctly.
+    if (isWindows && str === '\x08') {
+      str = '\x7f';
+    }
 
     // If we're processing a function key command, forward input to command handler
     if (isProcessingFunctionKey) {
@@ -219,6 +214,8 @@ export function createPtyWrapper(options: PtyWrapperOptions = {}): PtyWrapper {
       isProcessingFunctionKey = true;
       try {
         await options.onF9();
+      } catch (err) {
+        process.stderr.write(`Hub F9 error: ${err instanceof Error ? err.message : String(err)}\n`);
       } finally {
         isProcessingFunctionKey = false;
       }
@@ -239,6 +236,8 @@ export function createPtyWrapper(options: PtyWrapperOptions = {}): PtyWrapper {
       isProcessingFunctionKey = true;
       try {
         await options.onF10();
+      } catch (err) {
+        process.stderr.write(`Hub F10 error: ${err instanceof Error ? err.message : String(err)}\n`);
       } finally {
         isProcessingFunctionKey = false;
       }

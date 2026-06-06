@@ -13,6 +13,19 @@ export function expandPath(filePath: string): string {
 }
 
 /**
+ * Contract absolute home-directory paths back to ~/... form
+ */
+export function contractPath(filePath: string): string {
+  const home = os.homedir();
+  if (filePath === home) return '~';
+  const sep = path.sep;
+  if (filePath.startsWith(home + sep)) {
+    return '~/' + filePath.slice(home.length + sep.length).replace(/\\/g, '/');
+  }
+  return filePath;
+}
+
+/**
  * Recursively walk a directory and return all file paths
  */
 export function* walkDirectory(dir: string): Generator<string> {

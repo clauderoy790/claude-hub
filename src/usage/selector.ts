@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { APIUsageData } from './api';
 
@@ -45,7 +46,7 @@ export const SIMILAR_SCORE_THRESHOLD = 10;
 
 /** State file location */
 export const STATE_FILE_PATH = path.join(
-  process.env.HOME || '~',
+  os.homedir(),
   '.claude-hub',
   'state.json'
 );
