@@ -1,4 +1,4 @@
-# Claude Hub
+﻿# Claude Hub
 
 A CLI tool for managing multiple Claude Code accounts. Keeps conversations, agents, commands, and skills in sync across accounts, with real-time usage tracking to help you spread usage evenly by always starting sessions on the account with the most remaining quota. No need to logout/login to work with multiple accounts. Syncs your conversations across your accounts and sync your skills, commands, and agents through a "master" folder so you simply add a new skill/command/agent in your master folder and they will be synced to all accounts.
 
@@ -432,6 +432,34 @@ Make sure each account has been used at least once with its config directory so 
 If you hit a rate limit mid-session, press **F10** to manually switch to another account. Your conversation will be synced and resumed on the new account.
 
 The rate limit is a 5-hour rolling window. The "resets at" time (shown with F9 or `hub --usage`) tells you when your quota starts refreshing.
+
+### Shift+Enter Not Working (Windows)
+
+If Shift+Enter submits instead of creating a new line, use **Ctrl+J** or type `\` then Enter as alternatives that work without configuration.
+
+To fix Shift+Enter in Windows Terminal, open settings (`Ctrl+,` → "Open JSON file") and add:
+
+**In the `"actions"` array:**
+```json
+{
+    "command":
+    {
+        "action": "sendInput",
+        "input": "[13;2u"
+    },
+    "id": "User.shiftEnter"
+}
+```
+
+**In the `"keybindings"` array:**
+```json
+{
+    "id": "User.shiftEnter",
+    "keys": "shift+enter"
+}
+```
+
+Restart Windows Terminal for changes to take effect.
 
 ## Keyboard Shortcuts
 
