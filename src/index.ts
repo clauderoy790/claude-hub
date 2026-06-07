@@ -28,9 +28,9 @@ import {
 import { createPtyWrapper, cleanupTerminal } from './pty';
 import { renderStartupBox, displayVerboseSyncDetails, SyncSummary } from './display';
 import { executeCommand, CommandContext } from './commands';
+import { launchClaudeWindows } from './launch/windows';
+import { findActiveSessionId } from './utils/session';
 import { spawn } from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
 import * as os from 'os';
 
 interface CliArgs {
@@ -195,83 +195,6 @@ function runSync(config: ReturnType<typeof loadConfig>, verbose: boolean): SyncS
     extensions,
     mcp,
   };
-}
-
-/**
- * Find the active session ID by checking the most recent message timestamp
- * in each conversation file for the current project.
- *
- * This is more reliable than file mtime because:
- * - It's based on actual message timestamps inside the file
- * - Sync operations don't change these internal timestamps
- * - The active conversation will have the most recent message
- */
-function findActiveSessionId(configDir: string): string | null {
-  try {
-    const cwd = process.cwd();
-    // Convert path to project dir name format used by Claude Code
-    // macOS: /Users/me/code -> -Users-me-code
-    // Windows: C:\Git\code -> C--Git-code
-    let projectDirName: string;
-    if (process.platform === 'win32') {
-      // Windows: replace colon and backslashes with dashes (C:\Git\x → C--Git-x)
-      projectDirName = cwd.replace(/:/g, '-').replace(/\\/g, '-');
-    } else {
-      // macOS/Linux: replace leading / with -, then replace remaining / with -
-      projectDirName = '-' + cwd.slice(1).replace(/\//g, '-');
-    }
-    const projectPath = path.join(configDir, 'projects', projectDirName);
-
-    if (!fs.existsSync(projectPath)) {
-      return null;
-    }
-
-    const files = fs.readdirSync(projectPath)
-      .filter(f => f.endsWith('.jsonl') && !f.includes('/'));
-
-    if (files.length === 0) {
-      return null;
-    }
-
-    // Find the conversation with the most recent message timestamp
-    let latestTimestamp = '';
-    let latestSessionId: string | null = null;
-
-    for (const file of files) {
-      const filePath = path.join(projectPath, file);
-      const sessionId = file.replace('.jsonl', '');
-
-      try {
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const lines = content.trim().split('\n');
-
-        // Search from end for an entry with a timestamp
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            const entry = JSON.parse(lines[i]);
-            if (entry.timestamp) {
-              // Compare ISO timestamps (string comparison works for ISO format)
-              if (entry.timestamp > latestTimestamp) {
-                latestTimestamp = entry.timestamp;
-                latestSessionId = sessionId;
-              }
-              break; // Found timestamp for this file, move to next file
-            }
-          } catch {
-            // Skip malformed lines
-            continue;
-          }
-        }
-      } catch {
-        // Skip files that can't be read
-        continue;
-      }
-    }
-
-    return latestSessionId;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -686,7 +609,10 @@ async function main(): Promise<void> {
     }
 
     // Launch Claude
-    const autoSwitch = !args.noAutoSwitch && usageData.length > 0;
+    const isWindows = process.platform === 'win32';
+    // Auto-switch needs node-pty output scanning, which we skip on Windows to
+    // keep native scrollback/selection. F10 is the Windows manual switch.
+    const autoSwitch = !args.noAutoSwitch && usageData.length > 0 && !isWindows;
 
     // Display compact startup box (unless verbose mode which already showed details)
     if (!args.verbose) {
@@ -705,7 +631,10 @@ async function main(): Promise<void> {
       console.log('');
     }
 
-    if (autoSwitch) {
+    if (isWindows) {
+      // Direct-attach launch (native scrollback/selection); see launch/windows.ts.
+      launchClaudeWindows(config, accountToUse, args.claudeArgs, usageData, args.verbose);
+    } else if (autoSwitch) {
       launchClaudeWithPty(config, accountToUse, args.claudeArgs, usageData, true, args.verbose);
     } else {
       launchClaudeFallback(config, accountToUse, args.claudeArgs);
