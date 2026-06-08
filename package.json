@@ -8,6 +8,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postinstall": "node scripts/postinstall.js",
     "install-cli": "npm run build && npm link",
     "uninstall-cli": "npm unlink -g claude-hub",
     "start": "node dist/index.js",
