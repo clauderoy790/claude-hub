@@ -7,6 +7,7 @@
 import * as os from 'os';
 import * as path from 'path';
 import * as fs from 'fs';
+import { LoggedOutError } from '../../src/platform/types';
 
 describe('Platform abstraction', () => {
   describe('platform selection', () => {
@@ -137,6 +138,47 @@ describe('Windows platform credentials', () => {
     expect(() => {
       windowsPlatform.getCredentials(testDir);
     }).toThrow(/OAuth token not found/);
+  });
+
+  test('reports logged out when Claude Code blanked the credential', () => {
+    // Claude Code empties these fields in place after a refresh is rejected,
+    // which is a logout rather than a corrupt file
+    const blankedCredentials = {
+      claudeAiOauth: {
+        accessToken: '',
+        refreshToken: '',
+        expiresAt: 0,
+        scopes: ['user:inference'],
+        subscriptionType: 'pro',
+        rateLimitTier: 'default',
+      },
+    };
+    fs.writeFileSync(credentialsFile, JSON.stringify(blankedCredentials));
+
+    expect(() => {
+      windowsPlatform.getCredentials(testDir);
+    }).toThrow(LoggedOutError);
+    expect(() => {
+      windowsPlatform.getCredentials(testDir);
+    }).toThrow(/hub login/);
+  });
+
+  test('preserves refreshTokenExpiresAt when present', () => {
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    fs.writeFileSync(credentialsFile, JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        expiresAt: Date.now() + 3600000,
+        refreshTokenExpiresAt: expiresAt,
+        scopes: ['user:inference'],
+        subscriptionType: 'pro',
+        rateLimitTier: 'default',
+      },
+    }));
+
+    const result = windowsPlatform.getCredentials(testDir);
+    expect(result.claudeAiOauth.refreshTokenExpiresAt).toBe(expiresAt);
   });
 });
 

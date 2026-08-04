@@ -9,6 +9,7 @@
  */
 
 import { APIUsageData } from '../usage';
+import { LoginStatus, describeLoginStatus, needsLogin } from '../auth/status';
 
 export interface SyncSummary {
   conversations: { copied: number; updated: number; skipped: number };
@@ -118,13 +119,46 @@ function renderLine(content: string): void {
 }
 
 /**
+ * Build the login warning line, if any.
+ *
+ * Shows the launched account's own expiry first (it's the one about to bite),
+ * otherwise a roll-up of other accounts that need signing in.
+ */
+function buildLoginLine(
+  accountName: string,
+  loginStatus: LoginStatus | null,
+  otherStatuses: LoginStatus[]
+): string | null {
+  if (loginStatus) {
+    const description = describeLoginStatus(loginStatus);
+    if (description && loginStatus.state !== 'unknown') {
+      return `⚠ ${accountName} ${description}`;
+    }
+  }
+
+  const stale = otherStatuses.filter(
+    s => s.accountName !== accountName && (needsLogin(s.state) || s.state === 'expiring')
+  );
+
+  if (stale.length === 0) {
+    return null;
+  }
+  if (stale.length === 1) {
+    return `⚠ ${stale[0].accountName}: ${describeLoginStatus(stale[0])}`;
+  }
+  return `⚠ ${stale.length} accounts need login`;
+}
+
+/**
  * Render the compact startup box
  */
 export function renderStartupBox(
   accountName: string,
   usage: APIUsageData | null,
   syncSummary: SyncSummary | null,
-  autoSwitch: boolean
+  autoSwitch: boolean,
+  loginStatus: LoginStatus | null = null,
+  allLoginStatuses: LoginStatus[] = []
 ): void {
   // Top border: ┌─ Hub ─────...─────┐
   // Must be BORDER_WIDTH chars total
@@ -152,6 +186,12 @@ export function renderStartupBox(
   // Sync status line
   const syncLine = buildSyncLine(syncSummary, autoSwitch);
   renderLine(syncLine);
+
+  // Login expiry warning (only when something needs attention)
+  const loginLine = buildLoginLine(accountName, loginStatus, allLoginStatuses);
+  if (loginLine) {
+    renderLine(loginLine);
+  }
 
   // Shortcuts line
   renderLine('F9: usage | F10: switch');

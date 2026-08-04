@@ -7,6 +7,7 @@
 
 import { APIUsageData } from './api';
 import { selectBestAccount } from './selector';
+import { LoginStatus, describeLoginStatus, needsLogin } from '../auth/status';
 
 /**
  * Generate a progress bar string
@@ -70,7 +71,7 @@ function formatResetTime(resetDate: Date): string {
  *   Weekly   ███░░░░░░░  28% | ⏱ 3d 21h
  * ```
  */
-export function displayAPIUsage(usages: APIUsageData[]): void {
+export function displayAPIUsage(usages: APIUsageData[], loginStatuses: LoginStatus[] = []): void {
   if (usages.length === 0) {
     console.log('No accounts configured.');
     return;
@@ -79,6 +80,7 @@ export function displayAPIUsage(usages: APIUsageData[]): void {
   // Find the best account
   const bestSelection = selectBestAccount(usages);
   const bestName = bestSelection?.accountName || '';
+  const loginByAccount = new Map(loginStatuses.map(s => [s.accountName, s]));
 
   console.log('Claude Hub Usage');
   console.log('');
@@ -98,8 +100,19 @@ export function displayAPIUsage(usages: APIUsageData[]): void {
 
     console.log(header);
 
+    // Login state, when it needs attention
+    const login = loginByAccount.get(usage.accountName);
+    const loginNote = login ? describeLoginStatus(login) : null;
+    if (login && loginNote) {
+      const action = needsLogin(login.state) ? ` — run: hub login ${usage.accountName}` : '';
+      console.log(`  ${loginNote}${action}`);
+    }
+
     if (usage.error) {
-      console.log(`  Error: ${usage.error}`);
+      // A signed-out account already explained itself on the line above
+      if (!(login && needsLogin(login.state))) {
+        console.log(`  Error: ${usage.error}`);
+      }
     } else {
       // Session line
       const sessionBar = progressBar(usage.fiveHourUsed);

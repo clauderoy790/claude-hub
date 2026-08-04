@@ -263,6 +263,8 @@ hub --rename-account <old> <new> Rename an existing account
 hub --sync                       Sync only, don't run claude
 hub --usage                      Show combined usage across all accounts
 hub --no-auto-switch             Disable automatic account switching on rate limit
+hub login                        Show login status (days left) for all accounts
+hub login <account>              Sign an account in, in its own Chrome profile
 hub mcp add <name> [args]        Add MCP server (synced to all accounts)
 hub mcp remove <name>            Remove MCP server from all accounts
 hub mcp list                     List MCP servers
@@ -281,6 +283,54 @@ Claude Hub fetches **real usage data** directly from Anthropic's API using OAuth
 - **Windows**: `.credentials.json` files in each config directory
 
 See [Multi-Account Keychain Guide](docs/multi-account-keychain.md) for macOS details.
+
+Hub only ever **reads** these credentials. Refresh tokens are single-use and rotate,
+so refreshing one outside the Claude CLI can leave the CLI holding a dead token and
+log the account out for good — refreshing is left entirely to `claude`.
+
+### Logins
+
+A claude.ai login lasts about **30 days from `/login`**, and using the account does
+not extend that window — signing in again is the only thing that resets the clock.
+
+```bash
+hub login             # who's signed in, and for how much longer
+hub login cc2         # sign cc2 in, or renew it early
+```
+
+```
+Claude Hub Logins
+
+  ✓ cc1   me@gmail.com    11 days left    Chrome: cc1
+  ✗ cc2   me2@gmail.com   logged out      Chrome: cc2
+```
+
+Hub makes the monthly renewal as painless as it can be:
+
+- **Warns early** — the startup box and F9 flag a login expiring within 5 days.
+- **Offers to renew at launch** — one keystroke while you're starting work, instead of
+  an interruption mid-task. Asked at most once a day per account.
+- **Signs in automatically** — starting an account whose login has already lapsed drops
+  you straight into the browser flow, then into your session. No error, no second command.
+- **One browser profile per account** — account `cc2` logs in through Chrome profile
+  `cc2`, created on first use. Because Claude Code opens the browser via `$BROWSER`, hub
+  points it at that profile for both `hub login` *and* any `/login` typed mid-session —
+  so you never have to sign claude.ai out of one account to sign into another.
+- **Cleans up after itself** — the "Sign in" and "Sign in successful" tabs are closed
+  once the token is stored, and Chrome quits if that leaves nothing open. If you use
+  Chrome normally your windows are untouched and it keeps running; only OAuth-flow URLs
+  are ever matched, never a Claude tab you're working in. macOS only, and it needs
+  permission to control Chrome, which macOS asks for the first time.
+
+The first login for an account opens a brand-new Chrome profile; sign into claude.ai
+there once as that account and it stays signed in from then on. To reuse a profile you
+already have instead, add `"chromeProfiles": { "cc2": "Profile 2" }` to `config.json`.
+
+**Tip:** sign each Chrome profile into Google with that account's address. claude.ai
+then offers *Continue with Google* and the whole renewal is one click — no emailed
+code or link. If you do get an emailed sign-in link, open it **in that same Chrome
+window**; the pending login lives in that profile's cookies, so clicking it from your
+usual browser signs the wrong profile in and leaves the original stuck.
 
 ### Conversation Sync
 
@@ -351,6 +401,10 @@ claude-hub/
 ├── src/
 │   ├── index.ts           # CLI entry point
 │   ├── config.ts          # Configuration management
+│   ├── auth/
+│   │   ├── status.ts          # Login expiry state per account
+│   │   ├── login.ts           # hub login subcommand
+│   │   └── browser.ts         # Per-account Chrome profile routing
 │   ├── sync/
 │   │   ├── conversations.ts   # Conversation sync
 │   │   ├── extensions.ts      # Agents/commands/skills sync
@@ -407,21 +461,27 @@ Tests use [Jest](https://jestjs.io/) with TypeScript. Unit tests are in `tests/u
 
 ## Troubleshooting
 
-### "Not logged in" Error
+### "Logged out" / "Not logged in"
 
-Run Claude manually for that account to authenticate:
+Sign the account back in:
 
 ```bash
-CLAUDE_CONFIG_DIR=~/.claude2 claude
+hub login account2
 ```
+
+Logins last about 30 days and can't be extended by use, so this is expected
+periodically — `hub login` shows how long each account has left. An account can also
+be signed out early if something refreshes its token outside the Claude CLI (see
+*Usage Tracking* above).
 
 ### Token Expired (401)
 
-Run any Claude command to refresh:
+Nothing to do — the access token refreshes automatically the next time you start a
+session with that account. `hub --usage` may briefly show `token expired` for an idle
+account; that's the 8-hour access token, not the login.
 
-```bash
-CLAUDE_CONFIG_DIR=~/.claude2 claude --version
-```
+Don't try to force a refresh by launching and killing `claude`. Refresh tokens are
+single-use, so a refresh interrupted partway can permanently log the account out.
 
 ### Usage Shows Wrong Data
 
@@ -522,6 +582,7 @@ Press 1 to switch, Esc to cancel
 | [Plan 1](plans/1_claude-hub-implementation.md) | Core functionality | 2026-01-18 | Completed |
 | [Plan 2](plans/2_ux-improvements.md) | UX improvements & in-session commands | 2026-01-30 | Completed |
 | [Plan 4](plans/4_mcp-sync.md) | MCP server sync across accounts | 2026-02-08 | Completed |
+| [Plan 5](plans/5_login-lifecycle.md) | Login expiry, auto re-login, browser profiles | 2026-08-01 | Completed |
 
 ## License
 

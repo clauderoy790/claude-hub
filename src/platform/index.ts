@@ -28,3 +28,4 @@ export const platform = getPlatform();
 
 /** Re-export types for convenience */
 export type { Platform, CredentialData } from './types';
+export { LoggedOutError } from './types';

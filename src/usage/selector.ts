@@ -74,6 +74,11 @@ export interface SelectorState {
   lastUsedAccount: string | null;
   lastUsedAt: string | null;
   activeSessions: ActiveSession[];
+  /**
+   * When we last offered to renew each account's login (account -> ISO date).
+   * Keeps the renewal prompt to once a day per account.
+   */
+  renewalPromptedAt?: Record<string, string>;
 }
 
 interface ScoredAccount {

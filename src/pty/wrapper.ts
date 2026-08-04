@@ -15,6 +15,9 @@ import { platform } from '../platform';
 
 const RATE_LIMIT_TRIGGER = "You've hit your limit";
 
+// Claude Code prints this once a login lapses mid-session (v2.1.206+).
+const LOGIN_EXPIRED_TRIGGER = 'Login expired';
+
 // Function key escape sequences (xterm style)
 const F9_SEQ = '\x1b[20~';
 const F10_SEQ = '\x1b[21~';
@@ -30,6 +33,8 @@ export interface PtyWrapperOptions {
   cwd?: string;
   /** Callback when rate limit is detected */
   onRateLimitDetected?: () => void;
+  /** Callback when the account's login expires mid-session */
+  onLoginExpired?: () => void;
   /** Callback when process exits */
   onExit?: (code: number) => void;
   /** Callback when F9 is pressed (show usage) */
@@ -76,6 +81,7 @@ export function createPtyWrapper(options: PtyWrapperOptions = {}): PtyWrapper {
   let ptyProcess: pty.IPty | null = null;
   let outputBuffer = '';
   let rateLimitDetected = false;
+  let loginExpiredDetected = false;
 
   // State for function key handling
   let isProcessingFunctionKey = false;
@@ -148,6 +154,16 @@ export function createPtyWrapper(options: PtyWrapperOptions = {}): PtyWrapper {
       emitter.emit('rate-limit');
       if (options.onRateLimitDetected) {
         options.onRateLimitDetected();
+      }
+    }
+
+    // Login lapsed mid-session. BROWSER is already pointed at this account's
+    // Chrome profile, so /login right here opens the correct account.
+    if (!loginExpiredDetected && outputBuffer.includes(LOGIN_EXPIRED_TRIGGER)) {
+      loginExpiredDetected = true;
+      emitter.emit('login-expired');
+      if (options.onLoginExpired) {
+        options.onLoginExpired();
       }
     }
 

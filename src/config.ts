@@ -7,6 +7,13 @@ export interface Config {
   accounts: Record<string, string>;
   masterFolder: string;
   syncOnStart: boolean;
+  /**
+   * Chrome profile directory per account (e.g., { cc2: "Profile 2" }).
+   * Logins for that account open in that profile, so each Claude account keeps
+   * its own signed-in browser. Optional — accounts without one use the default
+   * browser.
+   */
+  chromeProfiles?: Record<string, string>;
 }
 
 const CONFIG_FILE = 'config.json';

@@ -23,9 +23,22 @@ import {
   unregisterSession,
   getScoreBreakdown,
   getConfigValues,
+  clearUsageCache,
   APIUsageData,
 } from './usage';
 import { createPtyWrapper, cleanupTerminal } from './pty';
+import {
+  handleLoginCommand,
+  runLogin,
+  offerRenewal,
+  getLoginStatus,
+  getAllLoginStatus,
+  needsLogin,
+  buildAuthEnv,
+  resolveProfileDirectory,
+  isChromeAvailable,
+  LoginStatus,
+} from './auth';
 import { renderStartupBox, displayVerboseSyncDetails, SyncSummary } from './display';
 import { executeCommand, CommandContext } from './commands';
 import { launchClaudeWindows } from './launch/windows';
@@ -45,6 +58,7 @@ interface CliArgs {
   addAccount: string | null;
   renameAccount: { oldName: string; newName: string } | null;
   mcpArgs: string[] | null;
+  loginArgs: string[] | null;
   claudeArgs: string[];
 }
 
@@ -55,6 +69,12 @@ function parseArgs(): CliArgs {
   let mcpArgs: string[] | null = null;
   if (args[0] === 'mcp') {
     mcpArgs = args.slice(1);
+  }
+
+  // Detect `hub login [account]`
+  let loginArgs: string[] | null = null;
+  if (args[0] === 'login') {
+    loginArgs = args.slice(1);
   }
 
   // Find --account flag
@@ -107,7 +127,8 @@ function parseArgs(): CliArgs {
     sync: args.includes('--sync'),
     verbose: args.includes('-v') || args.includes('--verbose'),
     list: args.includes('--list'),
-    help: args.includes('--help') || args.includes('-h'),
+    // `hub login --help` belongs to the login subcommand, not the global help
+    help: (args.includes('--help') || args.includes('-h')) && args[0] !== 'login',
     usage: args.includes('--usage'),
     score: args.includes('--score'),
     noAutoSwitch: args.includes('--no-auto-switch'),
@@ -115,6 +136,7 @@ function parseArgs(): CliArgs {
     addAccount,
     renameAccount,
     mcpArgs,
+    loginArgs,
     claudeArgs,
   };
 }
@@ -130,6 +152,8 @@ Usage:
   hub --rename-account <old> <new> Rename an account
   hub --sync                       Sync only, don't run claude
   hub --usage                      Show combined usage across all accounts
+  hub login                        Show login status for all accounts
+  hub login <account>              Sign an account in (in its own browser profile)
   hub mcp add <name> [args]        Add MCP server (synced to all accounts)
   hub mcp remove <name>            Remove MCP server from all accounts
   hub mcp list                     List MCP servers
@@ -157,6 +181,8 @@ Smart Features:
   - Detects rate limits and switches to another account
   - Syncs conversations so you can resume on any account
   - MCP servers synced from master folder to all accounts
+  - Warns before a login expires, and signs lapsed accounts in on launch
+  - Each account logs in through its own Chrome profile (no claude.ai switching)
 
 Examples:
   hub                                  # Auto-select best account and run
@@ -216,15 +242,10 @@ function launchClaudeWithPty(
     process.exit(1);
   }
 
-  // Build environment
-  const homeDir = os.homedir();
-  const defaultClaudeDir = `${homeDir}/.claude`;
-  const needsConfigDir = accountPath !== defaultClaudeDir;
-
-  const env = { ...process.env };
-  if (needsConfigDir) {
-    env.CLAUDE_CONFIG_DIR = accountPath;
-  }
+  // Build environment. BROWSER points at this account's Chrome profile, so a
+  // /login typed mid-session opens the browser already signed in as this
+  // account instead of whichever one claude.ai happens to be showing.
+  const env = buildAuthEnv(accountName, accountPath, config);
 
   // Register this session for multi-terminal awareness
   registerSession(accountName);
@@ -302,6 +323,16 @@ function launchClaudeWithPty(
     args: claudeArgs,
     env,
     cwd: process.cwd(),
+
+    // Login lapsed mid-session
+    onLoginExpired: () => {
+      const where = isChromeAvailable()
+        ? ` (opens Chrome profile "${resolveProfileDirectory(accountName, config)}")`
+        : '';
+      console.log('');
+      console.log(`⚠ ${accountName}'s login expired — type /login to renew it${where}.`);
+      console.log('');
+    },
 
     // F9: Show usage
     onF9: async () => {
@@ -488,6 +519,12 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Login subcommand
+    if (args.loginArgs) {
+      const success = await handleLoginCommand(args.loginArgs, config);
+      process.exit(success ? 0 : 1);
+    }
+
     // Debug mode: list conversations
     if (args.list) {
       listConversations(config);
@@ -499,7 +536,7 @@ async function main(): Promise<void> {
       console.log('Fetching usage from Anthropic API...');
       console.log('');
       const usages = await getAllAPIUsage(config.accounts);
-      displayAPIUsage(usages);
+      displayAPIUsage(usages, getAllLoginStatus(config.accounts));
       return;
     }
 
@@ -563,11 +600,34 @@ async function main(): Promise<void> {
       }
       usageData = await getAllAPIUsage(config.accounts);
 
-      const selection = selectBestAccount(usageData);
+      let selection = selectBestAccount(usageData);
 
+      // Every account unusable is usually every account signed out — sign one
+      // in rather than dead-ending on an error.
       if (!selection) {
-        console.error('Error: No accounts available');
-        process.exit(1);
+        const signedOut = getAllLoginStatus(config.accounts).filter(s => needsLogin(s.state));
+
+        if (signedOut.length === 0) {
+          console.error('Error: No accounts available');
+          process.exit(1);
+        }
+
+        console.log(`No account has a valid login (${signedOut.map(s => s.accountName).join(', ')}).`);
+        console.log('');
+
+        if (!await runLogin(signedOut[0].accountName, config)) {
+          process.exit(1);
+        }
+        console.log('');
+
+        clearUsageCache();
+        usageData = await getAllAPIUsage(config.accounts);
+        selection = selectBestAccount(usageData);
+
+        if (!selection) {
+          console.error('Error: No accounts available');
+          process.exit(1);
+        }
       }
 
       if (selection.isRateLimited && args.verbose) {
@@ -599,6 +659,31 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
+    // Deal with the login before starting a session: sign in if it has lapsed,
+    // or offer to renew if it's about to. Both beat being interrupted mid-task.
+    let loginStatus: LoginStatus = getLoginStatus(accountToUse, config.accounts[accountToUse]);
+    let loginChanged = false;
+
+    if (needsLogin(loginStatus.state)) {
+      console.log(`${accountToUse} is signed out — signing in first.`);
+      console.log('');
+
+      if (!await runLogin(accountToUse, config)) {
+        process.exit(1);
+      }
+      console.log('');
+      loginChanged = true;
+    } else if (loginStatus.state === 'expiring') {
+      loginChanged = await offerRenewal(loginStatus, config);
+    }
+
+    if (loginChanged) {
+      loginStatus = getLoginStatus(accountToUse, config.accounts[accountToUse]);
+      clearUsageCache();
+      usageData = await getAllAPIUsage(config.accounts);
+      selectedUsage = usageData.find(u => u.accountName === accountToUse) || null;
+    }
+
     // Auto-sync if enabled
     let syncSummary: SyncSummary | null = null;
     if (config.syncOnStart) {
@@ -616,7 +701,15 @@ async function main(): Promise<void> {
 
     // Display compact startup box (unless verbose mode which already showed details)
     if (!args.verbose) {
-      renderStartupBox(accountToUse, selectedUsage, syncSummary, autoSwitch);
+      const allLoginStatuses = getAllLoginStatus(config.accounts);
+      renderStartupBox(
+        accountToUse,
+        selectedUsage,
+        syncSummary,
+        autoSwitch,
+        loginStatus,
+        allLoginStatuses
+      );
       console.log('');
     } else {
       // Verbose mode: show traditional launch message

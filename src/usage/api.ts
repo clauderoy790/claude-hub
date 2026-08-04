@@ -9,12 +9,9 @@
  * This gives actual usage percentages (vs ccusage which estimates from local files).
  */
 
-import { spawnSync } from 'child_process';
 import https from 'https';
 import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { expandPath, getClaudeConfigPath } from '../utils/files';
+import { getClaudeConfigPath } from '../utils/files';
 import { platform, CredentialData } from '../platform';
 
 // ============================================================================
@@ -92,7 +89,6 @@ interface OAuthAccountInfo {
 
 const USAGE_API_URL = 'https://api.anthropic.com/api/oauth/usage';
 const API_BETA_HEADER = 'oauth-2025-04-20';
-const DEFAULT_CLAUDE_DIR = '.claude';
 
 // ============================================================================
 // Account Info Functions
@@ -113,54 +109,6 @@ export function getAccountInfo(configDir: string): OAuthAccountInfo | null {
     return config.oauthAccount || null;
   } catch {
     return null;
-  }
-}
-
-// ============================================================================
-// Token Refresh Functions
-// ============================================================================
-
-/**
- * Refresh OAuth token by launching Claude CLI
- *
- * Claude refreshes expired tokens on startup, before processing any input.
- * We launch with stdin closed which triggers the refresh but exits immediately.
- * This is fast and doesn't consume any API usage.
- *
- * NOTE: `claude --version` does NOT refresh tokens - it doesn't check auth.
- * NOTE: The command will "fail" with an error about needing input, but
- *       the token refresh still happens during startup.
- *
- * @param configDir - Path to config directory (e.g., "~/.claude2")
- * @returns true if refresh likely succeeded, false on spawn error
- */
-export function refreshToken(configDir: string): boolean {
-  const expandedPath = expandPath(configDir);
-  const homeDir = os.homedir();
-  const defaultDir = path.join(homeDir, DEFAULT_CLAUDE_DIR);
-
-  // Build environment - only set CLAUDE_CONFIG_DIR for non-default dirs
-  const env = { ...process.env };
-  if (expandedPath !== defaultDir) {
-    env.CLAUDE_CONFIG_DIR = expandedPath;
-  }
-
-  try {
-    // Launch claude with stdin ignored
-    // This triggers token refresh on startup, then exits immediately
-    // The command will exit with error (no input) but token is refreshed
-    spawnSync('claude', [], {
-      env,
-      encoding: 'utf-8',
-      timeout: 30000, // 30 second timeout
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    // We don't check exit status because the command "fails" due to no input,
-    // but the token refresh still happens during startup
-    return true;
-  } catch {
-    return false;
   }
 }
 
@@ -202,7 +150,7 @@ export function fetchUsageFromAPI(accessToken: string): Promise<UsageAPIResponse
             reject(new Error(`Failed to parse API response: ${err}`));
           }
         } else if (res.statusCode === 401) {
-          reject(new Error('Token expired. Run `claude` in terminal to refresh.'));
+          reject(new Error('token expired (refreshes on next use)'));
         } else {
           reject(new Error(`API error ${res.statusCode}: ${data}`));
         }
@@ -293,8 +241,11 @@ function parseAPIResponse(accountName: string, response: UsageAPIResponse, email
  * This function reads the OAuth token using the platform-specific method
  * (Keychain on macOS, .credentials.json on Windows) and makes the API call.
  *
- * If the token is expired (401), it automatically refreshes by running
- * `claude` and retries the API call.
+ * Hub never refreshes tokens itself. Anthropic rotates refresh tokens on every
+ * use, so a refresh started outside the Claude CLI (or interrupted partway) can
+ * leave the CLI holding a superseded token, which the server then rejects with
+ * invalid_grant — permanently logging the account out. Refreshing is left
+ * entirely to `claude`, inside a session that owns the credential.
  *
  * @param accountName - Display name for the account (e.g., "main", "work")
  * @param configDir - Path to the config directory (e.g., "~/.claude2")
@@ -320,35 +271,11 @@ export async function getAPIUsage(accountName: string, configDir: string): Promi
 
   try {
     // Read token using platform-specific method
-    let credentials = platform.getCredentials(configDir);
-    let token = credentials.claudeAiOauth.accessToken;
+    const credentials = platform.getCredentials(configDir);
+    const token = credentials.claudeAiOauth.accessToken;
 
-    // Fetch usage from API
-    try {
-      const response = await fetchUsageFromAPI(token);
-      return parseAPIResponse(accountName, response, email);
-    } catch (apiErr) {
-      // Check if this is a token expiry error (401)
-      const errMsg = apiErr instanceof Error ? apiErr.message : String(apiErr);
-      if (errMsg.includes('Token expired') || errMsg.includes('401')) {
-        // Try to refresh the token
-        const refreshed = refreshToken(configDir);
-        if (!refreshed) {
-          return makeErrorResult('Token expired. Refresh failed.');
-        }
-
-        // Re-read the token (should be updated now)
-        credentials = platform.getCredentials(configDir);
-        token = credentials.claudeAiOauth.accessToken;
-
-        // Retry the API call
-        const response = await fetchUsageFromAPI(token);
-        return parseAPIResponse(accountName, response, email);
-      }
-
-      // Not a token expiry error, re-throw
-      throw apiErr;
-    }
+    const response = await fetchUsageFromAPI(token);
+    return parseAPIResponse(accountName, response, email);
   } catch (err) {
     return makeErrorResult(err instanceof Error ? err.message : String(err));
   }

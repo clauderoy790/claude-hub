@@ -7,6 +7,7 @@
 
 import { registerCommand, CommandHandler } from './handler';
 import { getAllAPIUsage, APIUsageData, hasValidUsageCache, selectBestAccount } from '../usage';
+import { getAllLoginStatus, describeLoginStatus, needsLogin, LoginStatus } from '../auth/status';
 
 // ANSI escape sequences
 const ESC = '\x1b';
@@ -58,10 +59,12 @@ function formatResetTime(resetDate: Date): string {
  */
 function renderUsageDisplay(
   usages: APIUsageData[],
-  currentAccount: string
+  currentAccount: string,
+  loginStatuses: LoginStatus[] = []
 ): void {
   const bestSelection = selectBestAccount(usages);
   const bestAccount = bestSelection?.accountName ?? null;
+  const loginByAccount = new Map(loginStatuses.map(s => [s.accountName, s]));
 
   // Title
   process.stdout.write(`${BOLD}${CYAN}Hub Usage${RESET}\n\n`);
@@ -84,8 +87,19 @@ function renderUsageDisplay(
 
     process.stdout.write(`${BOLD}${nameDisplay}${RESET}${suffix}\n`);
 
+    // Login state, when it needs attention
+    const login = loginByAccount.get(usage.accountName);
+    const loginNote = login ? describeLoginStatus(login) : null;
+    if (login && loginNote) {
+      const action = needsLogin(login.state) ? ` — run: hub login ${usage.accountName}` : '';
+      process.stdout.write(`  ${DIM}${loginNote}${action}${RESET}\n`);
+    }
+
     if (usage.error) {
-      process.stdout.write(`  ${DIM}Error: ${usage.error}${RESET}\n`);
+      // A signed-out account already explained itself on the line above
+      if (!(login && needsLogin(login.state))) {
+        process.stdout.write(`  ${DIM}Error: ${usage.error}${RESET}\n`);
+      }
     } else {
       // Session line
       const sessionBar = progressBar(usage.fiveHourUsed);
@@ -162,7 +176,7 @@ const hubHandler: CommandHandler = async (args, context) => {
     process.stdout.write(CURSOR_HOME);
 
     // Render usage
-    renderUsageDisplay(usages, context.accountName);
+    renderUsageDisplay(usages, context.accountName, getAllLoginStatus(context.accounts));
 
     // Wait for any key to dismiss
     await waitForAnyKey(context);

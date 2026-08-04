@@ -15,6 +15,10 @@ claude-hub/
 ├── src/
 │   ├── index.ts           # CLI entry point
 │   ├── config.ts          # Configuration management
+│   ├── auth/
+│   │   ├── status.ts          # Login expiry state per account
+│   │   ├── login.ts           # `hub login` command
+│   │   └── browser.ts         # Per-account Chrome profile routing
 │   ├── sync/
 │   │   ├── conversations.ts   # Conversation sync logic
 │   │   ├── extensions.ts      # Agents/commands/skills sync
@@ -61,17 +65,24 @@ claude-hub/
 
 Accounts can be named anything and you can have as many as needed.
 
+Each account logs in through a Chrome profile **named after the account** (`cc2` uses
+Chrome profile `cc2`), created on first use — no configuration needed. The optional
+`chromeProfiles` key overrides that, to point an account at a profile you already
+have: `"chromeProfiles": { "cc2": "Profile 2" }`.
+
 ## Implementation Plans
 
 - `plans/1_claude-hub-implementation.md` - Core functionality (Completed)
 - `plans/2_ux-improvements.md` - UX improvements & keyboard shortcuts (Completed)
 - `plans/4_mcp-sync.md` - MCP server sync across accounts (Completed)
+- `plans/5_login-lifecycle.md` - Login expiry, auto re-login, browser profiles (Completed)
 
-## Phase Status (Plan 4: MCP Server Sync)
+## Phase Status (Plan 5: Login Lifecycle)
 
-- [x] Phase 1: MCP sync engine
-- [x] Phase 2: `hub mcp` subcommands
-- [x] Phase 3: Polish & edge cases
+- [x] Phase 1: Stop hub refreshing tokens (it was killing idle logins)
+- [x] Phase 2: Surface login expiry in startup box, F9, and `hub --usage`
+- [x] Phase 3: `hub login` with a Chrome profile per account
+- [x] Phase 4: Auto sign-in on launch, renewal prompt, browser cleanup
 
 ## Keyboard Shortcuts (while Claude is running)
 
@@ -89,6 +100,8 @@ hub                    # Auto-selects best account, syncs, runs claude
 hub --account account2 # Force specific account
 hub --sync             # Manual sync only
 hub --usage            # Show combined usage across all accounts
+hub login              # Show login status (days left) for all accounts
+hub login <account>    # Sign an account in, in its own Chrome profile
 hub mcp add <name> -- <cmd>  # Add MCP server to all accounts
 hub mcp remove <name>        # Remove MCP server from all accounts
 hub mcp list                 # List MCP servers
@@ -102,6 +115,9 @@ hub mcp list                 # List MCP servers
 4. **Load balancing**: Spreads usage evenly to avoid maxing one account
 5. **Combined usage**: See total remaining across all accounts
 6. **MCP sync**: `hub mcp add` installs MCP servers to all accounts at once
+7. **Login lifecycle**: Warns before a login expires, offers to renew it at launch,
+   signs lapsed accounts in automatically, and routes each account's login to its own
+   Chrome profile
 
 ## Development
 
@@ -118,3 +134,13 @@ npm link  # Makes 'hub' command available globally
 - MCP servers sync from master's `.claude.json` → all accounts' `.claude.json` (only the `mcpServers` key; account-specific data is preserved)
 - Local extension additions are detected and copied to master
 - Config path quirk: `~/.claude` stores config at `~/.claude.json`, other dirs at `<dir>/.claude.json` — use `getClaudeConfigPath()` from `utils/files.ts`
+- **Never refresh OAuth tokens from hub.** Anthropic rotates refresh tokens on every
+  use, so a refresh performed (or interrupted) outside the Claude CLI leaves the CLI
+  holding a superseded token, which the server rejects with `invalid_grant` — and
+  Claude Code then blanks the credential, forcing a full re-login. Hub only ever
+  *reads* credentials; refreshing belongs to `claude`. See `plans/5_login-lifecycle.md`.
+- A login lasts ~30 days from `/login` and refreshing does **not** extend it (measured:
+  a refresh re-derives `refreshTokenExpiresAt` from a server countdown to the same fixed
+  deadline). Only a fresh login resets the clock, which is why `hub login` doubles as
+  "renew" and works on healthy accounts. Blanked tokens (`accessToken: ""`) mean logged
+  out, not corrupt.
