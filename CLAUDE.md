@@ -76,6 +76,7 @@ have: `"chromeProfiles": { "cc2": "Profile 2" }`.
 - `plans/2_ux-improvements.md` - UX improvements & keyboard shortcuts (Completed)
 - `plans/4_mcp-sync.md` - MCP server sync across accounts (Completed)
 - `plans/5_login-lifecycle.md` - Login expiry, auto re-login, browser profiles (Completed)
+- `plans/6_login-lifecycle-windows.md` - Same on Windows (investigation sketch, not started)
 
 ## Phase Status (Plan 5: Login Lifecycle)
 

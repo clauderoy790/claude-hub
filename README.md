@@ -583,6 +583,7 @@ Press 1 to switch, Esc to cancel
 | [Plan 2](plans/2_ux-improvements.md) | UX improvements & in-session commands | 2026-01-30 | Completed |
 | [Plan 4](plans/4_mcp-sync.md) | MCP server sync across accounts | 2026-02-08 | Completed |
 | [Plan 5](plans/5_login-lifecycle.md) | Login expiry, auto re-login, browser profiles | 2026-08-01 | Completed |
+| [Plan 6](plans/6_login-lifecycle-windows.md) | Login lifecycle on Windows | 2026-08-03 | Investigation |
 
 ## License
 

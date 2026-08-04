@@ -13,9 +13,9 @@
  * scanning); F10 is the manual switch.
  */
 
-import * as os from 'os';
 import { spawn } from 'child_process';
 import { loadConfig } from '../config';
+import { buildAuthEnv } from '../auth';
 import { syncConversations, syncHistory } from '../sync';
 import { registerSession, unregisterSession, APIUsageData } from '../usage';
 import { executeCommand, CommandContext } from '../commands';
@@ -38,13 +38,9 @@ export function launchClaudeWindows(
     process.exit(1);
   }
 
-  const homeDir = os.homedir();
-  const needsConfigDir = accountPath !== `${homeDir}/.claude`;
-
-  const env = { ...process.env };
-  if (needsConfigDir) {
-    env.CLAUDE_CONFIG_DIR = accountPath;
-  }
+  // Also points BROWSER at this account's Chrome profile, so a /login typed
+  // mid-session opens the browser already signed in as this account.
+  const env = buildAuthEnv(accountName, accountPath, config);
 
   registerSession(accountName);
   const cleanupSession = () => unregisterSession();

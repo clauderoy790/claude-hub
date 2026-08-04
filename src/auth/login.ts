@@ -85,7 +85,9 @@ export async function runLogin(accountName: string, config: Config): Promise<boo
   // "Continue with Google" button. Left alone, a profile signed into the right
   // Google account signs in with one click. The account and address are printed
   // above, so there's no ambiguity about who to sign in as.
-  const result = spawnSync('claude', ['auth', 'login'], {
+  // resolveCommand matters on Windows, where `claude` can be a .cmd shim that
+  // spawnSync won't find by bare name.
+  const result = spawnSync(platform.resolveCommand('claude'), ['auth', 'login'], {
     stdio: 'inherit',
     env: buildAuthEnv(accountName, configDir, config),
   });
